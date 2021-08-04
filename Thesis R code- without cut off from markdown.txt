@@ -1,0 +1,729 @@
+---
+title: "Masters"
+author: "Emily Burnett"
+date: "23/06/2021"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+```
+# Thesis R Markdown Code
+## Installing packages for data manipulation
+```{r,echo=TRUE}
+require("readxl")
+require(c("RSQLite", "lubridate"))
+require(lubridate)
+require(RSQLite)
+require(dplyr)
+```
+
+## Importing databases into R
+```{r, echo=TRUE}
+#Implementing 24th of June SQlite database
+SQLite.database5 <-"D:/MScWork/PAMGuard/PAMDatabase/Good_Data/24062021data-no_clicks1.sqlite3"
+database.con5 <- dbConnect(SQLite(), SQLite.database5)
+dbListTables(database.con5)
+
+#Implementing 15th of June SQlite database
+SQLite.database4 <-"D:/MScWork/PAMGuard/PAMDatabase/Good_Data/15062021data-no_clicks.sqlite3"
+database.con4 <- dbConnect(SQLite(), SQLite.database4)
+dbListTables(database.con4)
+
+#Implementing 9th of June SQlite database
+SQLite.database3 <-"D:/MScWork/PAMGuard/PAMDatabase/Good_Data/09062021data-no_clicks.sqlite3"
+database.con3 <- dbConnect(SQLite(), SQLite.database3)
+dbListTables(database.con3)
+
+#Implementing 8th of June SQlite database
+SQLite.database2 <-"D:/MScWork/PAMGuard/PAMDatabase/Good_Data/08062021data2-no_clicks.sqlite3"
+database.con2 <- dbConnect(SQLite(), SQLite.database2)
+dbListTables(database.con2) 
+
+#Implementing 7th of June SQlite database
+SQLite.database1 <-"D:/MScWork/PAMGuard/PAMDatabase/Good_Data/07062021data2-no_clicks.sqlite3"
+database.con1 <- dbConnect(SQLite(), SQLite.database1)
+dbListTables(database.con1) 
+```
+
+## Cutting databases down to Whistle moan detector
+```{r,echo=TRUE}
+###24th
+whistles5 <- dbReadTable(database.con5, "Whistle_and_Moan_Detector")
+summary(whistles5)
+str(whistles5)
+
+###15th
+whistles4 <- dbReadTable(database.con4, "Whistle_and_Moan_Detector")
+summary(whistles4)
+str(whistles4)
+
+###9th
+whistles3 <- dbReadTable(database.con3, "Whistle_and_Moan_Detector")
+summary(whistles3)
+str(whistles3)
+
+###8th
+whistles2 <- dbReadTable(database.con2, "Whistle_and_Moan_Detector")
+summary(whistles2)
+str(whistles2)
+
+###7th
+whistles1 <- dbReadTable(database.con1, "Whistle_and_Moan_Detector")
+summary(whistles1)
+str(whistles1)
+```
+
+## Combining data sets into one database
+```{r, echo=TRUE}
+#(only used first 7th,8th,9th for more streamlined analysis)
+data<- rbind(whistles1, whistles2, whistles3)
+str(data)
+```
+
+## Filtering false detections and unnecessary frequencies from PAMGuard data 
+```{r, echo=TRUE}
+
+##Making sure only noise >3kHz (fundamental frequency) was used
+
+data.high.freq <- data [which(data$lowFreq>=3200),]
+data <- data.high.freq
+
+##Removing false whistles (boat noise detected as whistles) by PAMGuard
+
+data$freq.diff <- abs(data$lowFreq - data$highFreq)
+data.no.noise <- data[which(data$freq.diff>500),]
+data <- data.no.noise
+str(data)
+```
+
+## Making sure time was in seconds rather than miliseconds for easier analysis
+```{r, echo=TRUE}
+##Time with milliseconds
+
+data$UTC[1] 
+data$duration[1]
+
+data$posix <- as.POSIXct(data$UTC, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+##Time in Posix in seconds
+data$posix[1]
+```
+
+## Removing boat noise by filtering low frequency differences out
+```{r, echo=TRUE}
+quantile(data$freq.diff)
+data1<-data[ data$freq.diff > quantile(data$freq.diff , 0.25 ) , ]
+data1$posix <- as.POSIXct(data1$UTC, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+```
+
+## Formatting data to make 1 minute metric
+```{r, echo=TRUE}
+dat<- read.csv(file="C:/Users/emily/OneDrive/Documents/Masters/MScProject/Raw_data/Seconds_Data.csv")
+
+dat$datetime <- paste0(dat$ï..StartDate," ", dat$StartTime)
+dat$StartPosix <- as.POSIXct(dat$datetime, format="%Y:%m:%d %H:%M:%S", tz="UTC")
+library(lubridate)
+
+##time series in seconds
+dat$EndPosix = dat$StartPosix + dat$DurationSeconds
+dat$FloorPosixE<- floor_date(dat$EndPosix, unit="minute")
+
+dat$FloorPosixS<-floor_date(dat$StartPosix, unit="minute")
+dat$FloorPosixS
+dat$Date <- as.Date(dat$StartPosix)
+dat$Time <- format(as.POSIXct(dat$StartPosix), format = "%H:%M:%S", tz="UTC")
+```
+
+## Creating 1 minute metric for whistles (whistle positive seconds)
+```{r, echo=TRUE}
+dat$date <- paste0(dat$Date," ", dat$time)
+dat$date<- as.POSIXct(dat$Date, format="%Y:%m:%d" )
+dat$time <- format(as.POSIXct(dat$StartPosix), format = "%H:%M:%S")
+dat$time
+
+time.seq <- NA
+
+for(y in 1:(nrow(dat)-1)){
+  seq.tmp <- seq(from=dat$FloorPosixS[y], to=dat$FloorPosixE[y],by="min")
+  seq.tmp <- as.character(seq.tmp)
+  time.seq <- c(time.seq, seq.tmp)
+  print(y)
+  print(length(time.seq))
+}
+
+time.seq <- time.seq[-1]
+```
+
+## Assigning whistle presence (Binary format) to 1 minute metric using previously filtered PAMGuard timestamped data 
+```{r, echo=TRUE}
+finaldf.posixwhistles <- data.frame(time= time.seq, whistle.pos.min=NA)
+finaldf.posixwhistles$time <- as.POSIXct(finaldf.posixwhistles$time, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+positive.minutes <- unique(data1$posix)
+
+finaldf.posixwhistles$whistle.pos.min <- ifelse(finaldf.posixwhistles$time %in% positive.minutes, 1, 0)
+
+plot(finaldf.posixwhistles$whistle.pos.min)
+finaldf.posixwhistles$whistle.pos.min
+finaldf.posixwhistles
+```
+
+## Merging whistle positive minutes and high tide times
+```{r, echo=TRUE}
+high_tide<- read.csv(file="C:/Users/emily/OneDrive/Documents/Tide.csv")
+str(high_tide)
+
+high_tide$datetime <- paste0(high_tide$ï..Date," ", high_tide$Time)
+high_tide$Posix <- as.POSIXct(high_tide$datetime, format="%Y:%m:%d %H:%M:%S", tz="UTC")
+high_tide$Posix[1]
+
+tidecut<- cut(finaldf.posixwhistles$time, high_tide$Posix, labels = FALSE,
+    include.lowest = FALSE, right = TRUE, dig.lab = 3,
+    ordered_result = FALSE)
+plot(tidecut)
+```
+
+### Creating Time Since high Tide (TSHT) variable 
+```{r, echo=TRUE}
+finaldf.posixwhistles$TSHT = finaldf.posixwhistles$time - high_tide$Posix[tidecut]
+finaldf.posixwhistles$TSHT
+```
+
+### Binning whistle presence by hour after high tide
+```{r, echo=TRUE}
+hours= seq(0,13*60,60)
+finaldf.posixwhistles$hrbins<- cut(as.numeric(finaldf.posixwhistles$TSHT), hours, labels = FALSE,
+    include.lowest = FALSE, right = TRUE, dig.lab = 3,
+    ordered_result = FALSE)
+as.numeric(finaldf.posixwhistles$TSHT[50])
+table(finaldf.posixwhistles$hrbins)
+finaldf.posixwhistles$hrbins
+```
+
+### Separating tidal cycles for comparison in graph
+```{r, echo=TRUE}
+finaldftide1=finaldf.posixwhistles[which(tidecut==1),]
+finaldftide2=finaldf.posixwhistles[which(tidecut==2),]
+finaldftide3=finaldf.posixwhistles[which(tidecut==3),]
+finaldftide4=finaldf.posixwhistles[which(tidecut==4),]
+finaldftide5=finaldf.posixwhistles[which(tidecut==5),]
+plot(tidecut)
+```
+
+### For all 5 tidal cycles across sample period 
+```{r, echo=TRUE}
+pos.whist.prop.tidehr=vector(,13)
+for(y in 1:13){
+  pos.whist.prop.tidehr[y]= sum(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$hrbins==y)])/ length(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$hrbins==y)])
+}
+pos.whist.prop.tidehr
+plot(x=c(1:13), y=pos.whist.prop.tidehr)
+```
+
+### For tide cycle1
+```{r, echo=TRUE}
+pos.whist.prop.tidehr1=vector(,13)
+for(y in 1:13){
+  pos.whist.prop.tidehr1[y]= sum(finaldftide1$whistle.pos.min[which(finaldftide1$hrbins==y)])/ length(finaldftide1$whistle.pos.min[which(finaldftide1$hrbins==y)])
+}
+pos.whist.prop.tidehr1
+```
+
+### For tide cycle2
+```{r, echo=TRUE}
+pos.whist.prop.tidehr2=vector(,13)
+for(y in 1:13){
+  pos.whist.prop.tidehr2[y]= sum(finaldftide2$whistle.pos.min[which(finaldftide2$hrbins==y)])/ length(finaldftide2$whistle.pos.min[which(finaldftide2$hrbins==y)])
+}
+pos.whist.prop.tidehr2
+```
+
+### For tide cycle 3
+```{r, echo=TRUE}
+pos.whist.prop.tidehr3=vector(,13)
+for(y in 1:13){
+  pos.whist.prop.tidehr3[y]= sum(finaldftide3$whistle.pos.min[which(finaldftide3$hrbins==y)])/ length(finaldftide3$whistle.pos.min[which(finaldftide3$hrbins==y)])
+}
+pos.whist.prop.tidehr3
+```
+
+### For tide cycle 4
+```{r, echo=TRUE}
+pos.whist.prop.tidehr4=vector(,13)
+for(y in 1:13){
+  pos.whist.prop.tidehr4[y]= sum(finaldftide4$whistle.pos.min[which(finaldftide4$hrbins==y)])/ length(finaldftide4$whistle.pos.min[which(finaldftide4$hrbins==y)])
+}
+pos.whist.prop.tidehr4
+```
+
+### For tide cycle 5
+```{r, echo=TRUE}
+pos.whist.prop.tidehr5=vector(,13)
+for(y in 1:13){
+  pos.whist.prop.tidehr5[y]= sum(finaldftide5$whistle.pos.min[which(finaldftide5$hrbins==y)])/ length(finaldftide5$whistle.pos.min[which(finaldftide5$hrbins==y)])
+}
+pos.whist.prop.tidehr5
+
+par(mfrow= c(2,3))
+par(mar= c(2,2,1,1))
+plot(x=c(1:13), y=pos.whist.prop.tidehr1)
+plot(x=c(1:13), y=pos.whist.prop.tidehr2)
+plot(x=c(1:13), y=pos.whist.prop.tidehr3)
+plot(x=c(1:13), y=pos.whist.prop.tidehr4)
+plot(x=c(1:13), y=pos.whist.prop.tidehr5)
+
+##final tidal plot (baseR)
+plot(x=c(1:13), y=pos.whist.prop.tidehr3, lines(c(1:13),pos.whist.prop.tidehr3), ylim=  c(0,0.5), xlab= "Time since high tide (hours)", ylab= "Proportion of whistles/hour")
+points(pos.whist.prop.tidehr2, col="red",lines(c(1:13),pos.whist.prop.tidehr2,col="red"))
+points(pos.whist.prop.tidehr4, col="blue",lines(c(1:13),pos.whist.prop.tidehr4, col="blue"))
+points(pos.whist.prop.tidehr5, col="purple",lines(c(1:13),pos.whist.prop.tidehr5, col="purple"))
+points(pos.whist.prop.tidehr1, col="green",lines(c(1:13),pos.whist.prop.tidehr1,col="green"))
+```
+
+## Binning diel cycle for modeling
+### Changing time to decimal format for easier analysis
+```{r, echo=TRUE}
+data1$Date <- as.Date(data1$posix)
+finaldf.posixwhistles$posixtime <- format(as.POSIXct(finaldf.posixwhistles$time), format = "%H:%M:%S") 
+finaldf.posixwhistles$posixdate <- format(as.POSIXct(finaldf.posixwhistles$time), format = "%Y:%m:%d") 
+
+finaldf.posixwhistles$decDay = as.numeric(substr(finaldf.posixwhistles$posixdate,9,10)) +
+   (as.numeric(substr(finaldf.posixwhistles$posixtime,1,2))/24) + (as.numeric(substr(finaldf.posixwhistles$posixtime,4,5))/(24*60)) + (as.numeric(substr(finaldf.posixwhistles$posixtime,7,8))/(24*3600))
+
+finaldf.posixwhistles$decTime= as.numeric(substr(finaldf.posixwhistles$posixtime,1,2)) + (as.numeric(substr(finaldf.posixwhistles$posixtime,4,5))/60) + (as.numeric(substr(finaldf.posixwhistles$posixtime,7,8))/3600)
+finaldf.posixwhistles$decTime
+```
+
+### rounding down decimal time to hour
+```{r, echo=TRUE}
+finaldf.posixwhistles$decTimebin<-floor(finaldf.posixwhistles$decTime)
+finaldf.posixwhistles$decTimebin
+```
+
+### rounding down decimal day so only shows date of recording
+```{r, echo=TRUE}
+finaldf.posixwhistles$dec.dayfloor<- floor(finaldf.posixwhistles$decDay)
+head(finaldf.posixwhistles)
+```
+
+## separating days from finaldf.posixwhistles data frame
+```{r, echo=TRUE}
+finaldfday1<- finaldf.posixwhistles[which(finaldf.posixwhistles$dec.dayfloor==7),]
+finaldfday2<-finaldf.posixwhistles[which(finaldf.posixwhistles$dec.dayfloor==8),]
+finaldfday3<-finaldf.posixwhistles[which(finaldf.posixwhistles$dec.dayfloor==9),]
+```
+
+### Total diel cycle
+```{r, echo=TRUE}
+pos.whist.prop.dielhr=vector(,23)
+for(y in 1:23){
+  pos.whist.prop.dielhr[y]= sum(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$decTimebin==y)])/ length(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$decTimebin==y)])
+}
+pos.whist.prop.dielhr
+```
+
+### diel cycle of the 7th
+```{r, echo=TRUE}
+pos.whist.prop.dielhr1=vector(,24)
+for(y in 1:24){
+  pos.whist.prop.dielhr1[y]= sum(finaldfday1$whistle.pos.min[which(finaldfday1$decTimebin==y)])/ length(finaldfday1$whistle.pos.min[which(finaldfday1$decTimebin==y)])
+}
+head(finaldfday1)
+```
+
+### diel cycle of the 8th 
+```{r, echo=TRUE}
+pos.whist.prop.dielhr2=vector(,24)
+for(y in 1:24){
+  pos.whist.prop.dielhr2[y]= sum(finaldfday2$whistle.pos.min[which(finaldfday2$decTimebin==y)])/ length(finaldfday2$whistle.pos.min[which(finaldfday2$decTimebin==y)])
+}
+```
+
+### diel cycle of the 9th
+```{r, echo=TRUE}
+pos.whist.prop.dielhr3=vector(,24)
+for(y in 1:24){
+  pos.whist.prop.dielhr3[y]= sum(finaldfday3$whistle.pos.min[which(finaldfday3$decTimebin==y)])/ length(finaldfday3$whistle.pos.min[which(finaldfday3$decTimebin==y)])
+}
+pos.whist.prop.dielhr2
+par(mfrow= c(2,2))
+par(mar= c(2,2,1,1))
+plot(x=c(1:24), y=pos.whist.prop.dielhr1)
+plot(x=c(1:24), y=pos.whist.prop.dielhr2)
+plot(x=c(1:24), y=pos.whist.prop.dielhr3)
+pos.whist.prop.dielhr2
+```
+
+### final diel plot (baseR)
+```{r, echo=TRUE}
+plot(x=c(1:24), y=pos.whist.prop.dielhr2, lines(c(1:24),pos.whist.prop.dielhr2), ylim=  c(0,0.6), xlab= "Time of day (hours)", ylab= "Proportion of whistles/hour")
+points(pos.whist.prop.dielhr1, col="red",lines(c(1:24),pos.whist.prop.dielhr1,col="red"))
+points(pos.whist.prop.dielhr3, col="blue",lines(c(1:24),pos.whist.prop.dielhr3, col="blue"))
+```
+
+## Adding and formatting boat data
+```{r, echo=TRUE}
+library("schoolmath")
+boats<- read.csv(file="C:/Users/emily/OneDrive/Documents/Masters/MScProject/Raw_data/Boat_data.csv")
+##change to posix format
+boats$StartPosix <- as.POSIXct(boats$Start.Time, format="%Y:%m:%d %H:%M:%S", tz="UTC")
+boats$StopPosix<- as.POSIXct(boats$Stop.Time, format="%Y:%m:%d %H:%M:%S", tz="UTC")
+
+##combining the stop_stop variable into 1 column
+boatnoise_startstop<- c(as.POSIXct(boats$StartPosix, format= "%H:%M:%S", tz="UTC"), as.POSIXct(boats$StopPosix, format= "%H:%M:%S", tz="UTC"))
+
+##sorting start stop times in ascending order
+sort.boat.noise<-sort(as.POSIXct(boatnoise_startstop, format="%Y:%m:%d %H:%M:%S", tz="UTC"))
+sort.boat.noise
+##binning total in relation to start stop time
+finaldf.posixwhistles$boatcut<- cut(finaldf.posixwhistles$time, sort.boat.noise, labels = FALSE,
+    include.lowest = FALSE, right = TRUE, dig.lab = 3,
+    ordered_result = FALSE)
+boatcut<- cut(finaldf.posixwhistles$time, sort.boat.noise, labels = FALSE,
+    include.lowest = FALSE, right = TRUE, dig.lab = 3,
+    ordered_result = FALSE)
+##making binary format for boat presence/absence 
+boatpositive.seconds <- unique(sort.boat.noise)
+finaldf.posixwhistles$boatnoise <- ifelse(finaldf.posixwhistles$time %in% boatpositive.seconds, 1, 0)
+
+##assigning binary to boatboise
+finaldf.posixwhistles$boatnoise= rep(0)
+boatcut1<-if(is.na(boatcut)) {x=FALSE} else {if(boatcut) {boatcut}} 
+boatcut=TRUE
+
+finaldf.posixwhistles$boatnoise[which(is.odd(finaldf.posixwhistles$boatcut))]=1
+```
+
+### Overall whistle proportion to boat presence
+```{r, echo=TRUE}
+pos.whist.prop.boathr=vector(,2)
+for(y in 0:1){
+  pos.whist.prop.boathr[y+1]= sum(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$boatcut==y)])/ length(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$boatcut==y)])
+}
+```
+
+### seperating boat noises to different periods in relation to whistle proportion
+```{r,echo=TRUE}
+pos.whist.prop.boatsep=matrix(,max(boatcut),2)
+for(y in 1:max(boatcut)){
+  temp=finaldf.posixwhistles[which(finaldf.posixwhistles$boatcut==y),]
+  pos.whist.prop.boatsep[y,1]= sum(temp$whistle.pos.min)/ length(temp$whistle.pos.min)
+ pos.whist.prop.boatsep[y,2]=ifelse(is.odd(y),1,0) 
+}
+
+```
+
+## Calculating boat presence in relation to whistles
+```{r,echo=TRUE}
+boat.time.seq <- NA
+
+for(y in 1:(nrow(boats)-1)){
+  seq.tmp <- seq(from=boats$StartPosix[y], to=boats$StopPosix[y],by="min")
+  seq.tmp <- as.character(seq.tmp)
+  boat.time.seq <- c(boat.time.seq, seq.tmp)
+  print(y)
+  print(length(boat.time.seq))
+}
+
+boat.time.seq
+boat.time.seq.uniq = unique(boat.time.seq)
+boat.time.seq.uniq
+
+boatdata<- as.data.frame(boat.time.seq.uniq)
+colnames(boatdata)="time"
+boatdata$time=as.POSIXct(boatdata$time, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+boatdata$boatpresence <- 1
+boatdata
+
+test=dplyr::left_join(finaldf.posixwhistles,boatdata,by="time")
+test$boatpresence[is.na(test$boatpresence)]=0
+test
+test$Fboatpresence<- as.factor(test$boatpresence)
+boxplot(whistle.pos.min~boatpresence, xlab="Presence", ylab= "Proportion of boats", data= test)
+finaldf.posixwhistles$boatpresence<-test$boatpresence
+finaldf.posixwhistles$Fboatpresence<-as.factor(test$boatpresence)
+finaldf.posixwhistles
+```
+
+### separate boat time distribution for boxplot
+```{r,echo=TRUE}
+pos.whist.prop.boatsep=matrix(,max(finaldf.posixwhistles$boatcut),2)
+for(y in 1:max(finaldf.posixwhistles$boatcut)){
+  temp=finaldf.posixwhistles[which(finaldf.posixwhistles$boatcut==y),]
+  pos.whist.prop.boatsep[y,1]= sum(temp$whistle.pos.min)/ length(temp$whistle.pos.min)
+ pos.whist.prop.boatsep[y,2]=ifelse(is.odd(y),1,0) 
+}
+pos.whist.prop.boatsep
+boxplot(pos.whist.prop.boatsep[,1]~pos.whist.prop.boatsep[,2], xlab="Presence", ylab= "Proportion of boats")
+```
+
+### overall whistle proportion to boat presence
+```{r,echo=TRUE}
+pos.whist.prop.boathr=vector(,2)
+for(y in 0:1){
+  pos.whist.prop.boathr[y+1]= sum(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$boatpresence==y)])/ length(finaldf.posixwhistles$whistle.pos.min[which(finaldf.posixwhistles$boatpresence==y)])
+}
+```
+
+## Putting diel cycle into ggplot form for report 
+```{r, echo=TRUE}
+library(ggplot2)
+#creating dataframe for diel ggplot
+time.of.day<- seq(1,24, 1)
+sample.day<- rep(c(1,2,3),each=24)
+
+whistle.day<- c(pos.whist.prop.dielhr1,pos.whist.prop.dielhr2,pos.whist.prop.dielhr3)
+dielgraphdf <- data.frame(whistle.day, time.of.day,sample.day)
+dielgraphdf$sample.day<- as.factor(dielgraphdf$sample.day)
+View(dielgraphdf)
+
+ggplotday<-ggplot(dielgraphdf, aes(x = time.of.day, y = whistle.day, colour = sample.day, group = sample.day))+
+  geom_point()+
+  geom_line()
+ggplotday+labs(x ="Time of day (hours)", y = "Probability of whistle detections/hour") + scale_x_discrete(limits=c(1:23)) +  geom_rect(
+    fill="black", colour= "black", alpha=0.005, 
+    xmin=0,
+    xmax=4,
+    ymin=0,
+    ymax=2
+    ) + scale_x_discrete(limits=c(1:23)) +  geom_rect(
+    fill="black", colour= "black", alpha=0.005, 
+    xmin=21,
+    xmax=25,
+    ymin=0,
+    ymax=2
+    )+
+  scale_y_continuous(limits = c(0,0.55), expand = c(0, 0))+stat_summary(fun.y=mean,geom="line", colour="black",lwd=1,aes(group=1))
+```
+
+## Putting time since high tide into ggplot form for report 
+```{r, echo=TRUE}
+#creating dataframe for tide ggplot
+time.since.ht<- seq(1,13, 1)
+tidecycle<- rep(c("1st","2nd","3rd","4th","5th"),each=13)
+
+whistle.tide<-c(pos.whist.prop.tidehr1,pos.whist.prop.tidehr2,pos.whist.prop.tidehr3,pos.whist.prop.tidehr4,pos.whist.prop.tidehr5)
+tidegraphdf<- data.frame(whistle.tide, time.since.ht,tidecycle)
+tidegraphdf$Tidal_cycle<- as.factor(tidegraphdf$tidecycle)
+View(tidegraphdf)
+
+ggplottide<-ggplot(tidegraphdf, aes(x = time.since.ht, y = whistle.tide, colour = Tidal_cycle, group = Tidal_cycle))+
+  geom_point(size=1.5)+
+  geom_line(alpha=5) 
+ggplottide + labs(x="Time since high tide (hours)", y="Probability of whistle detections/hour") + scale_x_discrete(limits=c(1:13)) +  geom_rect(
+    fill="blue",colour= "white",alpha=0.002, 
+    xmin=0,
+    xmax=2,
+    ymin=0,
+    ymax=2
+    ) + scale_x_discrete(limits=c(1:13)) +  geom_rect(
+    fill="white",colour= "white",alpha=0.0025, 
+    xmin=2,
+    xmax=5,
+    ymin=0,
+    ymax=2
+    ) + scale_x_discrete(limits=c(1:13)) +  geom_rect(
+    fill="red",colour= "white",alpha=0.002, 
+    xmin=5,
+    xmax=8,
+    ymin=0,
+    ymax=2
+    ) + scale_x_discrete(limits=c(1:13)) +  geom_rect(
+    fill="white",colour= "white",alpha=0.0025, 
+    xmin=8,
+    xmax=11,
+    ymin=0,
+    ymax=2
+    ) + scale_x_discrete(limits=c(1:13)) +  geom_rect(
+    fill="blue",colour= "white",alpha=0.002, 
+    xmin=11,
+    xmax=14,
+    ymin=0,
+    ymax=2
+    ) +
+  scale_y_continuous(limits = c(0,0.4), expand = c(0, 0))+stat_summary(fun.y=mean,geom="line", colour="black",lwd=1,aes(group=1))
+
+```
+
+## Putting boat presence into ggplot form for report 
+```{r, echo=TRUE}
+library(RColorBrewer)
+library(ggplot2)
+boxplot(pos.whist.prop.boatsep[,1]~pos.whist.prop.boatsep[,2], xlab="Presence", ylab= "Proportion of boats")
+
+colnames(pos.whist.prop.boatsep) <- c("Boat.prop", "Boat Presence")
+presence.cat<- rep(c(1,0),times=61)
+boatboxdf<- data.frame(pos.whist.prop.boatsep)
+pos.whist.prop.boatsep
+colnames(boatboxdf)<- c("Boat.prop", "Presence")
+boatboxdf$Presence<- as.factor(boatboxdf$Presence)
+
+ggplot(boatboxdf, aes(x=Presence, y=Boat.prop, fill=Presence))+
+         geom_boxplot(alpha=1) +
+    theme(legend.position="none") + labs(x="Boat presence", y="Probability of whistle detections")+   scale_y_continuous(limits = c(0,0.55), expand = c(0, 0))+ scale_x_discrete(labels = c('No','Yes'))
+```
+
+## Whistle detection probability descriptive statistics
+```{r, echo=TRUE}
+require(plotrix)
+library(plotrix)
+##diel cycle
+std.error(pos.whist.prop.dielhr)
+summary(pos.whist.prop.dielhr)
+sd(pos.whist.prop.dielhr)
+quantile(pos.whist.prop.dielhr)
+hist(finaldf.posixwhistles$decTime)
+##tidal cycle
+std.error(pos.whist.prop.tidehr)
+summary(pos.whist.prop.tidehr)
+sd(pos.whist.prop.tidehr)
+quantile(pos.whist.prop.tidehr)
+
+####hist(finaldf.posixwhistles$as.n.TSHT)<- wont knit properly for some reason
+
+##boat presence
+std.error(pos.whist.prop.boathr)
+summary(pos.whist.prop.boathr)
+sd(pos.whist.prop.boathr)
+quantile(pos.whist.prop.boathr)
+hist(finaldf.posixwhistles$boatpresence)
+```
+
+## Distributions of environmental variable data
+```{r, echo=TRUE}
+par(mfrow = c(1,3))
+hist(finaldf.posixwhistles$decTime, xlab="Time of day", main=NULL)
+
+####hist(finaldf.posixwhistles$as.n.TSHT, xlab="Time since high tide (minutes)",main=NULL)<- wont knit properly for some reason
+
+hist(finaldf.posixwhistles$boatcut, xlab="Boat number",main=NULL)
+```
+
+## GAM modeling 
+### making sure model cannot be fitted with linear model 
+```{r, echo=TRUE}
+library(mgcv)
+lm1= lm(whistle.pos.min~ Fboatpresence+ TSHT +decTime, data=finaldf.posixwhistles)
+
+par(mfrow = c(2,2))
+plot(lm1)
+```
+Through model validation- data should be put into GAM model as relationship is non-linear, no normality line, residuals vs fitted are grouped together not equally spread, observations clearly dependent
+
+### First GAM model construction-with all environmental variables
+```{r, echo=TRUE}
+finaldf.posixwhistles$as.n.TSHT<- as.numeric(finaldf.posixwhistles$TSHT)
+
+gam1<- gam(whistle.pos.min~ Fboatpresence+ s(as.n.TSHT,bs="cc") + s(decTime ,bs="cc",k=24),family="binomial", data=finaldf.posixwhistles, method="REML")
+
+gam1
+```
+
+```{r, echo=TRUE}
+##diel variable removed
+gam1.1<- gam(whistle.pos.min~ Fboatpresence+ s(as.n.TSHT,bs="cc"),family="binomial", data=finaldf.posixwhistles, method="REML")
+##tide variable removed
+gam1.2<- gam(whistle.pos.min~ Fboatpresence+ s(decTime ,bs="cc",k=24),family="binomial", data=finaldf.posixwhistles, method="REML")
+##boat variable removed
+gam1.3<-gam(whistle.pos.min~ + s(as.n.TSHT,bs="cc") + s(decTime ,bs="cc",k=24),family="binomial", data=finaldf.posixwhistles, method="REML")
+```
+
+## plotting variable binned data in relation to GAM model 
+### diel
+```{r, echo=TRUE}
+gg.day.gam<-ggplot(dielgraphdf, aes(x = time.of.day, y = whistle.day))+ geom_point() + geom_smooth()
+gg.day.gam +labs(x="Time of day", y="Probability of whistle detections/hour")
+```
+
+### Tide
+```{r, echo=TRUE}
+gg.tide.gam<-ggplot(tidegraphdf, aes(x = time.since.ht, y = whistle.tide))+ geom_point() + geom_smooth()
+gg.tide.gam +labs(x="Time since high tide", y="Probability of whistle detections/hour")
+```
+
+### Boat
+```{r, echo=TRUE}
+gg.boat.gam<-ggplot(boatboxdf, aes(x=Presence, y=Boat.prop, fill=Presence))+ geom_point() + geom_smooth()
+gg.boat.gam +labs(x="Boat presence", y="Probability of whistle detections")
+
+library(gridExtra)
+grid.arrange(gg.day.gam +labs(x="Time of day", y="Whistle detection probability"),
+gg.tide.gam +labs(x="Time since high tide", y="Whistle detection probability"),
+gg.boat.gam +labs(x="Boat presence", y="Whistle detection probability")+
+    theme(legend.position="none"),ncol=2, nrow=2)
+```
+
+## comparing deviance explained
+```{r, echo=TRUE,results="hide"}
+summary.gam(gam1.3)
+###radj:0.0559,dev explained:8.24, decTime most sig.
+summary.gam(gam1.2)
+###radj:0.0556,dev explained:8.22, decTime most sig.
+summary.gam(gam1.1)
+###radj:0.0245,dev explained:3.24, TSHT most sig.
+summary.gam(gam1)
+###radj:0.0558,dev explained:8.27, decTime most sig.
+
+##Trying model with just diel cycle 
+gam2<- gam(whistle.pos.min~ + s(decTime ,bs="cc",k=24),family="binomial", data=finaldf.posixwhistles, method="REML")
+summary(gam2)
+###has much better diagnostics
+```
+
+## Model selection
+```{r,results="hide"}
+AIC(gam1,gam1.1,gam1.2,gam1.3,gam2)
+###AIC lowest when only diel predictor is included in model(gam2)
+
+###validating model using normalised residuals (before scaled residuals with DHARMa package)
+par(mfrow= c(2,2))
+gam.check(gam2)
+```
+
+## using DHARMa package to test to see if family chosen in model is reasoning for residual patterns in model validation 
+
+I first calculated the randomised quantile residuals of fitted model (GAM2)
+```{r, echo=TRUE,results="hide"}
+library(DHARMa)
+testDispersion(gam2)
+simulationOutput <- simulateResiduals(fittedModel = gam2, plot = F)
+```
+
+I then calculated its scaled residuals (mimicing straight line to see if residuals in model using binomial family are valid)
+```{r, echo=TRUE,results="hide"}
+residuals(simulationOutput)
+residuals(simulationOutput, quantileFunction = qnorm, outlierValues = c(-7,7))
+```
+
+I then tested to see if normality and homogeinity/dependance of residuals-checks out
+```{r, echo=TRUE}
+plot(simulationOutput)
+
+plotResiduals(simulationOutput, form = finaldf.posixwhistles$Fboatpresence)
+plotResiduals(simulationOutput, form = finaldf.posixwhistles$TSHT)
+plotResiduals(simulationOutput, form = finaldf.posixwhistles$decTime)
+
+simulationOutput <- simulateResiduals(fittedModel = gam1, refit = F)
+simulationOutput
+```
+
+## Checking if model residuals have temporal non-independence
+
+To confirm temporal non-independence, extracted normalised residuals and plotted whistle proportion against each hour of diel cycle
+
+```{r, echo=TRUE}
+library(lattice)
+xyplot(resid(gam2, type="pearson")~ decTime|whistle.pos.min, ylab="Normalized residuals", xlab="Time of day", data=finaldf.posixwhistles)
+
+###used acf to decide which autocorrelation method could be used (would use MA-moving average if given more time due to pattern not following 'smooth decay' trend)
+acf(residuals(gam1, type="pearson"),lag=24,main="")
+```
+
+Then used partial autocorrelation to calculate correlation of each lag but partials out/accounts for the correlation of previous lags, as more than 50% of lags are significantly different from zero (above--- line), MA (moving average) structure is needed if had time to go ahead with fixing temporal non-independance 
+```{r, echo=TRUE}
+pacf(residuals(gam1, type="pearson"),lag=24,main="")
+```
